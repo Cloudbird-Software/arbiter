@@ -1,0 +1,13 @@
+# arbiter 误放行/误拒台账（false decision ledger，ADR-0054 §7）
+# 格式：每行一个 JSON 对象（# 开头行为注释，读取时跳过）；初始为空——发现首例即记。
+# 字段约定（详见 docs/FALSE-DECISIONS.md）：
+#   {"date": "2026-08-21T12:00:00Z",
+#    "kind": "false-allow" | "false-deny",
+#    "scenario": "并发认领/重放/越权/过期/接管/……",
+#    "input": {"command": "...", "sender_role": "...", "card": "...", "delivery_id": "..."},
+#    "expected": "期望裁决与依据（AC 编号/策略表条款）",
+#    "actual": {"verdict": "...", "code": "..."},
+#    "root_cause": "一句话根因",
+#    "fix_ref": "PR#/commit——回流=修复提交+新增回归测试"}
+# 本台账是宪法 §8「安全正确性：仲裁误放行/误拒数」的落盘形态；
+# 周审计时从原始事件独立复算，发现差异 → 先记此台账 → 修复回流。
