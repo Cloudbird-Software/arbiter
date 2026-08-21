@@ -64,3 +64,14 @@ class TestCreateCommitWire(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestQuoteRefPathWire(unittest.TestCase):
+    def test_prefix_stripped_for_path_addressed_endpoints(self):
+        """按路径寻址 ref 的端点（GET/PATCH/DELETE）要求相对形态——带 refs/ 前缀一律 404/422。"""
+        from arbiter.backend import _quote_ref_path
+        self.assertEqual(
+            _quote_ref_path("refs/leases/o__r__1"),
+            "leases%2Fo__r__1",
+        )
+        self.assertEqual(_quote_ref_path("heads/main"), "heads%2Fmain")  # 已相对形态原样
