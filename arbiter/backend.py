@@ -25,9 +25,19 @@ ZERO_SHA = "0" * 40
 
 
 def _quote_ref_path(ref: str) -> str:
-    """ref 路径段编码（'/'→'%' 之外的保留字符按 RFC 3986 编码）。"""
+    """ref 路径段编码（'/'→'%' 之外的保留字符按 RFC 3986 编码）。
+
+    前缀剥离（e2e .github#206 /release 实测，2026-08-21）：GET /git/ref/、
+    PATCH/DELETE /git/refs/ 这三类"按路径寻址 ref"的端点对自定义命名空间
+    （refs/leases/…）要求相对形态——带完整 "refs/" 前缀一律 404/422
+    （探针实测：带前缀 GET 404、DELETE 422 Reference does not exist；
+    去前缀全部 200/204；%2F 编码两形态均接受）。createRef 的 POST /git/refs
+    用 body 传完整 "refs/…" 名不受影响（claim 链路实证）。
+    """
     import urllib.parse
 
+    if ref.startswith("refs/"):
+        ref = ref[len("refs/"):]
     return urllib.parse.quote(ref, safe="")
 
 
