@@ -114,16 +114,16 @@ class GitHubRefBackend:
             raise NotFoundError(f"ref 不存在: {ref}")
         raise InfraError(f"deleteRef HTTP {status}: {payload.get('message', '')}")
 
+    # 经典空树 SHA（git mktree </dev/null 的恒定值）——租约/台账 commit 不携带
+    # 任何文件内容，元数据全在 commit message。e2e 实测（.github#206 演习，
+    # conductor run 32493680834）：POST /git/trees 对空 body {}/{"tree":[]}
+    # 一律 422 "Invalid tree info"（GitHub 不接受创建空树），该路径在真实 API
+    # 上从未成功过——单测走 LocalGitBackend 故未暴露。直接引用空树 SHA 即可。
+    EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
     def create_commit(self, message: str, parent: str | None = None) -> str:
         """空树 commit，message 内嵌 JSON（租约/台账载体，ADR-0054 §2）。"""
-        status, payload = self._request(
-            "POST", f"/repos/{self._repo}/git/trees", {})
-        if status != 201:
-            raise InfraError(f"createTree HTTP {status}: {payload.get('message', '')}")
-        tree = payload.get("sha")
-        if not tree:
-            raise InfraError(f"createTree 未返回 sha: {payload}")
-        body = {"message": message, "tree": tree}
+        body = {"message": message, "tree": self.EMPTY_TREE_SHA}
         if parent:
             body["parents"] = [parent]
         status, payload = self._request(
