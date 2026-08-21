@@ -29,3 +29,10 @@ commands:
     # quarantine 回流：同 /release 语义（ADR-0054 §8）
     allowed_roles: [agent, owner]
     require_holder: true
+  # ---- 信任门（W5-C2 .github#225 / ADR-0071，宪法 §5——授权判定零 LLM） ----
+  # 只读查询命令：域解锁状态/shadow 连击/逃逸计数（数据源 = CI-Workflows
+  # pipeline/trust-gate 的 unlock-state.yaml + reconcile 汇总，本表只声明授权，
+  # 判定引擎在 CI-Workflows——arbiter 不读 GitHub 之外的任何真源）。
+  # 无 required_state（查询与卡状态无关）/无 require_holder（读操作无租约语义）。
+  /trust-status:
+    allowed_roles: [owner, agent, none]   # 只读：全角色可查（含未登录关联的 none）
