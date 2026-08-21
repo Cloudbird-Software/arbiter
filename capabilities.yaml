@@ -1,0 +1,31 @@
+# arbiter 仲裁策略表 —— 唯一授权真源（ADR-0054 §4）
+#
+# 铁律（默认拒绝）：命令/角色/状态无匹配规则 = deny，不是 abstain、不是 error。
+# 加载严格校验（arbiter/policy.py）：未知键、未知值、类型不符 → 拒绝启动（fail-closed）。
+#
+# 状态来源：arbiter 是纯函数内核，不读 GitHub issue——卡当前状态由调用方
+# （conductor 转介）经 --current-state 传入（宪法 §11 事件转介行）。
+#
+# 结构性不变量（不在表内配置，防死通用性）：
+# - 每卡至多 1 个活跃租约：租约 ref 名按卡唯一（refs/leases/<org>__<repo>__<n>），
+#   createRef 原子性保证（422=已存在），第二个租约在结构上无法存在。
+# - 防重放：只认 --event created；refs/seen/<sha1(delivery-id)> 原子幂等标记。
+schema_version: 1
+
+defaults:
+  # 租约 TTL（分钟）的唯一来源——代码不得写死（W1-C2 #165 命令集约定）
+  ttl_minutes: 240
+
+commands:
+  /claim:
+    # 认领：卡必须处于 ready 态（transitions.yaml T3 的仲裁化对应）
+    allowed_roles: [agent, owner]
+    required_state: ready
+  /release:
+    # 释放：仅租约持有者本人或 owner（holder+未过期校验在 kernel，AC-4）
+    allowed_roles: [agent, owner]
+    require_holder: true
+  /retry:
+    # quarantine 回流：同 /release 语义（ADR-0054 §8）
+    allowed_roles: [agent, owner]
+    require_holder: true

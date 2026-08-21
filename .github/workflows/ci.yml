@@ -1,0 +1,94 @@
+name: ci
+# arbiter 仲裁内核 v1 CI（W1-C2 .github#165 / ADR-0054）
+# 四面：lint（语法）→ test（unittest 全套：并发/重放/越权/过期）→
+# static-scan（无 LLM 边界静态断言）→ policy-validate（策略表可加载+默认拒绝）。
+# 本文件属 C1 路径：改动须 PR + ADR 引用（org-adr-required）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同一 PR 新推即取消旧跑（仲裁内核测试含并发用例，排队串行会拖慢反馈）
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read   # 最小权限：只读 checkout（写操作永不属于 CI）
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: bash 语法检查
+        run: bash -n scripts/adjudicate.sh
+      - name: python 编译检查
+        run: python3 -m py_compile arbiter/*.py tests/fakebackend.py tests/test_*.py
+
+  test:
+    # AC-5：并发/重放/越权/过期四类用例全绿（unittest，零第三方依赖）
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: unittest 全套
+        run: python3 -m unittest discover -s tests -v
+
+  static-scan:
+    # AC-1：无 LLM 边界静态断言（纯函数层 import 白名单 / URL 主机白名单 /
+    # 端点特征串扫描）——独立 job 让"越界"在 checks 里单独可见
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: 无 LLM 边界扫描（test_no_llm）
+        run: python3 -m unittest discover -s tests -p test_no_llm.py -v
+
+  policy-validate:
+    # 策略表 fail-closed：capabilities.yaml 加载失败=CI 红；默认拒绝路径可用
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: capabilities.yaml 校验 + 默认拒绝验证
+        run: python3 -m arbiter.policy capabilities.yaml
+
+  gate:
+    # 本地严格聚合器（ADR-0032 语义：skipped≠success，仅全 success 放行）——
+    # 供 org ruleset main-protection 的 required check "gate" 消费；
+    # 与中心 org-gate 双轨比对（ADR-0046 决策 3）
+    if: always()
+    needs: [lint, test, static-scan, policy-validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: All required jobs green?
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS"
+          OK=$(echo "$NEEDS" | jq -r 'to_entries | all(.value.result == "success")')
+          if [[ "$OK" != "true" ]]; then
+            echo "::error::gate 上游未全绿（skipped≠success：严格断言——ADR-0032）"; exit 1
+          fi
