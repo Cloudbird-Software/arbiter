@@ -1,7 +1,7 @@
 # arbiter — 仲裁内核（L2 最小仓）
 
 Cloudbird-Software 组织的写入仲裁内核（宪法 §1 /
-[ADR-0054](https://github.com/Cloudbird-Software/agent-registry/blob/main/decisions/ADR-0054-arbiter-kernel-v1.md) /
+[ADR-0054](https://github.com/Cloudbird-Software/archive/blob/main/adr/ADR-0054-arbiter-kernel-v1.md) /
 工作卡 [.github#165](https://github.com/Cloudbird-Software/.github/issues/165)）。
 
 对写入类命令（`/claim` `/release` `/retry`）做**确定性裁决**：
