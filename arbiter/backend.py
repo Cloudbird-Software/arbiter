@@ -17,6 +17,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from .kernel import CasConflict, InfraError, NotFoundError
 
@@ -34,8 +38,6 @@ def _quote_ref_path(ref: str) -> str:
     去前缀全部 200/204；%2F 编码两形态均接受）。createRef 的 POST /git/refs
     用 body 传完整 "refs/…" 名不受影响（claim 链路实证）。
     """
-    import urllib.parse
-
     if ref.startswith("refs/"):
         ref = ref[len("refs/"):]
     return urllib.parse.quote(ref, safe="")
@@ -58,9 +60,6 @@ class GitHubRefBackend:
         self._timeout = timeout
 
     def _request(self, method: str, path: str, body=None):
-        import urllib.request
-        import urllib.error
-
         url = f"{API_BASE}{path}"
         data = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(url, data=data, method=method, headers={
@@ -169,17 +168,33 @@ class LocalGitBackend:
         "GIT_COMMITTER_EMAIL": "arbiter@cloudbird.invalid",
     }
 
+    # git 子进程超时（秒）——LocalGitBackend 全部子进程调用共用
+    GIT_TIMEOUT_SECONDS = 30
+    # .lock 竞争重试参数（见 _retry_on_lock）
+    LOCK_RETRY_MAX_ATTEMPTS = 3
+    LOCK_RETRY_SLEEP_SECONDS = 0.15
+
     def __init__(self, repo_dir: str):
         self._dir = repo_dir
 
-    def _git(self, *args: str, stdin: str | None = None) -> str:
+    def _exec_git(self, args, ident: bool = False, stdin: str | None = None):
+        """构造并执行 git 子进程，返回 CompletedProcess（不判 rc、不包装异常）。
+
+        ident=True 时注入兜底 user.name/email。异常是否包成 InfraError 由各
+        调用方决定（只读探测与裁决路径的错误通道语义不同，故不在此统一）。
+        """
         env = dict(os.environ)
-        for key, val in self._IDENT_ENV.items():
-            env.setdefault(key, val)
+        if ident:
+            for key, val in self._IDENT_ENV.items():
+                env.setdefault(key, val)
+        return subprocess.run(
+            ["git", "-C", self._dir] + list(args),
+            input=stdin, capture_output=True, text=True,
+            timeout=self.GIT_TIMEOUT_SECONDS, env=env)
+
+    def _git(self, *args: str, stdin: str | None = None) -> str:
         try:
-            proc = subprocess.run(
-                ["git", "-C", self._dir] + list(args),
-                input=stdin, capture_output=True, text=True, timeout=30, env=env)
+            proc = self._exec_git(args, ident=True, stdin=stdin)
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise InfraError(f"git 子进程失败: {exc}") from exc
         if proc.returncode != 0:
@@ -200,26 +215,22 @@ class LocalGitBackend:
 
     def _exists(self, ref: str) -> bool:
         try:
-            proc = subprocess.run(
-                ["git", "-C", self._dir, "rev-parse", "--verify", "--quiet", ref],
-                capture_output=True, text=True, timeout=30)
-            return proc.returncode == 0
+            proc = self._exec_git(("rev-parse", "--verify", "--quiet", ref))
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise InfraError(f"git rev-parse 失败: {exc}") from exc
+        return proc.returncode == 0
 
     def _retry_on_lock(self, op):
-        """锁竞争（transient）重试至多 3 次；确定冲突/其他错误按类型抛出。"""
-        import time
-
+        """锁竞争（transient）重试至多 N 次；确定冲突/其他错误按类型抛出。"""
         last = None
-        for _ in range(3):
+        for _ in range(self.LOCK_RETRY_MAX_ATTEMPTS):
             try:
                 return op()
             except InfraError as exc:
                 if not self._is_transient_lock(str(exc)):
                     raise
                 last = exc
-                time.sleep(0.15)
+                time.sleep(self.LOCK_RETRY_SLEEP_SECONDS)
         raise last
 
     def create_ref(self, ref: str, sha: str) -> None:
@@ -236,9 +247,7 @@ class LocalGitBackend:
 
     def read_ref(self, ref: str) -> str:
         try:
-            proc = subprocess.run(
-                ["git", "-C", self._dir, "rev-parse", "--verify", ref],
-                capture_output=True, text=True, timeout=30)
+            proc = self._exec_git(("rev-parse", "--verify", ref))
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise InfraError(f"git rev-parse 失败: {exc}") from exc
         if proc.returncode == 0:
@@ -281,9 +290,8 @@ class LocalGitBackend:
             return self._git("log", "-1", "--format=%B", sha).strip()
         except InfraError:
             # 短路检查：对象不存在 → NotFound（其余仍是 Infra）
-            proc = subprocess.run(
-                ["git", "-C", self._dir, "cat-file", "-t", sha],
-                capture_output=True, text=True, timeout=30)
+            # （与原实现一致：此处不注入兜底 ident，也不包装 OSError/超时）
+            proc = self._exec_git(("cat-file", "-t", sha))
             if proc.returncode != 0:
                 raise NotFoundError(f"commit 不存在: {sha}") from None
             raise

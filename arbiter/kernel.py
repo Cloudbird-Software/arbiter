@@ -25,7 +25,9 @@ EXIT_ALLOW = 0
 EXIT_DENY = 1
 EXIT_INFRA = 2
 
-EXIT_CODE = {VERDICT_ALLOW: 0, VERDICT_NOOP: 0, VERDICT_DENY: 1, VERDICT_INFRA: 2}
+# verdict → exit code 映射（allow/noop 同为放行侧退出码，见模块 docstring）
+EXIT_CODE = {VERDICT_ALLOW: EXIT_ALLOW, VERDICT_NOOP: EXIT_ALLOW,
+             VERDICT_DENY: EXIT_DENY, VERDICT_INFRA: EXIT_INFRA}
 
 CLAIM = "/claim"
 RELEASE = "/release"
@@ -92,6 +94,7 @@ def adjudicate(command, card, sender, sender_role, delivery_id, event,
                              **base)
 
         # ---- 2. 防重放：原子幂等标记（refs/seen/<sha1>，422=已处理=no-op）----
+        # （InfraError 不在此捕获——交由函数级 infra 通道统一上报，可重投）
         seen = lease_mod.seen_ref(delivery_id)
         ledger_msg = json.dumps(
             {"delivery_id": delivery_id, "command": command, "card": canonical_card,
@@ -99,15 +102,12 @@ def adjudicate(command, card, sender, sender_role, delivery_id, event,
             ensure_ascii=False, sort_keys=True)
         try:
             marker = backend.create_commit(ledger_msg)
-            try:
-                backend.create_ref(seen, marker)
-            except CasConflict:
-                # 台账可查：refs/seen/<sha1> 指向的 commit message 即首次处理记录
-                return _decision(VERDICT_NOOP, "replay-detected",
-                                 f"delivery {delivery_id} 已处理过（seen ref 存在）——幂等 no-op",
-                                 **base)
-        except InfraError:
-            raise
+            backend.create_ref(seen, marker)
+        except CasConflict:
+            # 台账可查：refs/seen/<sha1> 指向的 commit message 即首次处理记录
+            return _decision(VERDICT_NOOP, "replay-detected",
+                             f"delivery {delivery_id} 已处理过（seen ref 存在）——幂等 no-op",
+                             **base)
 
         # ---- 3. 策略表静态判定（默认拒绝在 policy.check 内）----
         allowed, code, reason = policy.check(command, sender_role, current_state)
