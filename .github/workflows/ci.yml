@@ -4,6 +4,9 @@ name: ci
 # static-scan（无 LLM 边界静态断言）→ policy-validate（策略表可加载+默认拒绝）。
 # 本文件属 C1 路径：改动须 PR + ADR 引用（org-adr-required）。
 on:
+  merge_group:
+    # ADR-0042：merge queue 必需订阅
+    types: [checks_requested]
   push:
     branches: [main]
   pull_request:
@@ -17,6 +20,11 @@ permissions:
   contents: read   # 最小权限：只读 checkout（写操作永不属于 CI）
 
 jobs:
+  hygiene:
+    # CI-4（enforced）：工作流安全静态审计（zizmor medium+ 拦截）+ 大文件/密钥样文件
+    # 巡检——可复用工作流统一实现，本仓此前缺此面（治理对齐跟修）
+    uses: Cloudbird-Software/CI-Workflows/.github/workflows/hygiene.yml@61191f87c537f6e887695517121c6e530a838261 # v1
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -77,7 +85,7 @@ jobs:
     # 供 org ruleset main-protection 的 required check "gate" 消费；
     # 与中心 org-gate 双轨比对（ADR-0046 决策 3）
     if: always()
-    needs: [lint, test, static-scan, policy-validate]
+    needs: [lint, test, static-scan, policy-validate, hygiene]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
